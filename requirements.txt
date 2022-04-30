@@ -1,0 +1,7 @@
+torch==1.11.0
+torchvision==0.12.0
+pytorch_lightning==1.6.0
+einops==0.4.1
+imageio==2.17.0
+jupyter==1.0.0
+kornia==0.6.4
