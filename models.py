@@ -4,19 +4,34 @@ import numpy as np
 
 
 class MLP(nn.Module):
-    def __init__(self, n_in, n_layers=4, n_hidden_units=256):
+    def __init__(self, n_in,
+                 n_layers=4, n_hidden_units=256,
+                 act='relu', **kwargs):
         super().__init__()
 
-        module_list = [nn.Linear(n_in, n_hidden_units), nn.ReLU(True)]
+        if act == 'relu':
+            act = nn.ReLU(True)
+        elif act == 'gaussian':
+            act = GaussianActivation(a=kwargs['a'])
+        elif act == 'quadratic':
+            act = QuadraticActivation(a=kwargs['a'])
+        elif act == 'multi-quadratic':
+            act = MultiQuadraticActivation(a=kwargs['a'])
+        elif act == 'laplacian':
+            act = LaplacianActivation(a=kwargs['a'])
+        elif act == 'super-gaussian':
+            act = SuperGaussianActivation(a=kwargs['a'], b=kwargs['b'])
+        elif act == 'expsin':
+            act = ExpSinActivation(a=kwargs['a'])
+
+        layers = [nn.Linear(n_in, n_hidden_units), act]
         for i in range(n_layers-1):
             if i != n_layers-2:
-                module_list += [nn.Linear(n_hidden_units, n_hidden_units),
-                                nn.ReLU(True)]
+                layers += [nn.Linear(n_hidden_units, n_hidden_units), act]
             else:
-                module_list += [nn.Linear(n_hidden_units, 3),
-                                nn.Sigmoid()]
+                layers += [nn.Linear(n_hidden_units, 3), nn.Sigmoid()]
 
-        self.net = nn.Sequential(*module_list)
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         """
@@ -74,15 +89,16 @@ class SineLayer(nn.Module):
                 self.linear.weight.uniform_(-1 / self.in_features, 
                                              1 / self.in_features)      
             else:
-                self.linear.weight.uniform_(-np.sqrt(6 / self.in_features) / self.omega_0, 
-                                             np.sqrt(6 / self.in_features) / self.omega_0)
+                self.linear.weight.uniform_(-np.sqrt(6/self.in_features) / self.omega_0, 
+                                             np.sqrt(6/self.in_features) / self.omega_0)
         
     def forward(self, x):
         return torch.sin(self.omega_0 * self.linear(x))
     
     
 class Siren(nn.Module):
-    def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False, 
+    def __init__(self, in_features=2, out_features=3,
+                 hidden_features=256, hidden_layers=4, outermost_linear=False, 
                  first_omega_0=30, hidden_omega_0=30.):
         super().__init__()
         
@@ -112,9 +128,57 @@ class Siren(nn.Module):
         return self.net(x)
 
 
-class Gaussian(nn.Module):
-    def __init__(self):
-        pass
+# different activation functions
+class GaussianActivation(nn.Module):
+    def __init__(self, a=1.):
+        super().__init__()
+        self.a = a
 
     def forward(self, x):
-        pass
+        return torch.exp(-x**2/(2*self.a**2))
+
+
+class QuadraticActivation(nn.Module):
+    def __init__(self, a=1.):
+        super().__init__()
+        self.a = a
+
+    def forward(self, x):
+        return 1/(1+(self.a*x)**2)
+
+
+class MultiQuadraticActivation(nn.Module):
+    def __init__(self, a=1.):
+        super().__init__()
+        self.a = a
+
+    def forward(self, x):
+        return 1/(1+(self.a*x)**2)**0.5
+
+
+class LaplacianActivation(nn.Module):
+    def __init__(self, a=1.):
+        super().__init__()
+        self.a = a
+
+    def forward(self, x):
+        return torch.exp(-torch.abs(x)/self.a)
+
+
+class SuperGaussianActivation(nn.Module):
+    def __init__(self, a=1., b=1.):
+        super().__init__()
+        self.a = a
+        self.b = b
+
+    def forward(self, x):
+        return torch.exp(-x**2/(2*self.a**2))**self.b
+
+
+class ExpSinActivation(nn.Module):
+    def __init__(self, a=1.):
+        super().__init__()
+        self.a = a
+
+    def forward(self, x):
+        return torch.exp(-torch.sin(self.a*x))

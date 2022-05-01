@@ -9,7 +9,7 @@ from dataset import ImageDataset
 from torch.utils.data import DataLoader
 
 # models
-from models import PE, MLP
+from models import PE, MLP, Siren
 
 # metrics
 from metrics import psnr
@@ -26,27 +26,38 @@ class CoordMLPSystem(LightningModule):
     def __init__(self, hparams):
         super().__init__()
         self.save_hyperparameters(hparams)
-        if hparams.arch == 'identity':
-            self.net = MLP(n_in=2)
 
-        elif hparams.arch == 'pe':
+        if hparams.use_pe:
             P = torch.cat([torch.eye(2)*2**i for i in range(10)], 1) # (2, 2*10)
             self.pe = PE(P)
-            self.net = MLP(n_in=self.pe.out_dim)
 
-        elif hparams.arch == 'gau':
-            P = hparams.sc * torch.normal(torch.zeros(2, 256),
-                                          torch.ones(2, 256)) # (2, 256)
+        if hparams.arch in ['relu', 'gaussian', 'quadratic',
+                            'multi-quadratic', 'laplacian',
+                            'super-gaussian', 'expsin']:
+            kwargs = {'a': hparams.a, 'b': hparams.b}
+            act = hparams.arch
+            if hparams.use_pe:
+                n_in = self.pe.out_dim
+            else:
+                n_in = 2
+            self.net = MLP(n_in=n_in, act=act, **kwargs)
+
+        elif hparams.arch == 'ff':
+            P = hparams.sc*torch.normal(torch.zeros(2, 256),
+                                        torch.ones(2, 256)) # (2, 256)
             self.pe = PE(P)
             self.net = MLP(n_in=self.pe.out_dim)
+
+        elif hparams.arch == 'siren':
+            self.net = Siren(first_omega_0=hparams.omega_0,
+                             hidden_omega_0=hparams.omega_0)
 
         self.loss = nn.MSELoss()
         
     def forward(self, x):
-        if hparams.arch == 'identity':
-            return self.net(x)
-        if hparams.arch in ['pe', 'gau']:
-            return self.net(self.pe(x))
+        if hparams.use_pe or hparams.arch=='ff':
+            x = self.pe(x)
+        return self.net(x)
         
     def setup(self, stage=None):
         self.train_dataset = ImageDataset(hparams.image_path, 'train')
@@ -99,8 +110,8 @@ class CoordMLPSystem(LightningModule):
         mean_psnr = torch.stack([x['val_psnr'] for x in outputs]).mean()
         rgb_pred = torch.cat([x['rgb_pred'] for x in outputs]) # (512*512, 3)
         rgb_pred = rearrange(rgb_pred, '(h w) c -> c h w',
-                             h=2*self.train_dataset.r,
-                             w=2*self.train_dataset.r)
+                             h=self.train_dataset.r,
+                             w=self.train_dataset.r)
 
         self.logger.experiment.add_image('val/image_pred',
                                          rgb_pred,
