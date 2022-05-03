@@ -6,28 +6,38 @@ import numpy as np
 class MLP(nn.Module):
     def __init__(self, n_in,
                  n_layers=4, n_hidden_units=256,
-                 act='relu', **kwargs):
+                 act='relu', act_trainable=False,
+                 **kwargs):
         super().__init__()
 
-        if act == 'relu':
-            act = nn.ReLU(True)
-        elif act == 'gaussian':
-            act = GaussianActivation(a=kwargs['a'])
-        elif act == 'quadratic':
-            act = QuadraticActivation(a=kwargs['a'])
-        elif act == 'multi-quadratic':
-            act = MultiQuadraticActivation(a=kwargs['a'])
-        elif act == 'laplacian':
-            act = LaplacianActivation(a=kwargs['a'])
-        elif act == 'super-gaussian':
-            act = SuperGaussianActivation(a=kwargs['a'], b=kwargs['b'])
-        elif act == 'expsin':
-            act = ExpSinActivation(a=kwargs['a'])
+        layers = []
+        for i in range(n_layers):
 
-        layers = [nn.Linear(n_in, n_hidden_units), act]
-        for i in range(n_layers-1):
-            if i != n_layers-2:
-                layers += [nn.Linear(n_hidden_units, n_hidden_units), act]
+            if i == 0:
+                l = nn.Linear(n_in, n_hidden_units)
+                a = l.weight.std().item()
+            elif 0 < i < n_layers-1:
+                l = nn.Linear(n_hidden_units, n_hidden_units)
+                a = l.weight.std().item()
+
+            if act == 'relu':
+                act_ = nn.ReLU(True)
+            elif act == 'gaussian':
+                act_ = GaussianActivation(a=kwargs['a'], trainable=act_trainable)
+            elif act == 'quadratic':
+                act_ = QuadraticActivation(a=kwargs['a'], trainable=act_trainable)
+            elif act == 'multi-quadratic':
+                act_ = MultiQuadraticActivation(a=kwargs['a'], trainable=act_trainable)
+            elif act == 'laplacian':
+                act_ = LaplacianActivation(a=kwargs['a'], trainable=act_trainable)
+            elif act == 'super-gaussian':
+                act_ = SuperGaussianActivation(a=kwargs['a'], b=kwargs['b'],
+                                               trainable=act_trainable)
+            elif act == 'expsin':
+                act_ = ExpSinActivation(a=kwargs['a'], trainable=act_trainable)
+
+            if i < n_layers-1:
+                layers += [l, act_]
             else:
                 layers += [nn.Linear(n_hidden_units, 3), nn.Sigmoid()]
 
@@ -130,55 +140,55 @@ class Siren(nn.Module):
 
 # different activation functions
 class GaussianActivation(nn.Module):
-    def __init__(self, a=1.):
+    def __init__(self, a=1., trainable=True):
         super().__init__()
-        self.a = a
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
 
     def forward(self, x):
         return torch.exp(-x**2/(2*self.a**2))
 
 
 class QuadraticActivation(nn.Module):
-    def __init__(self, a=1.):
+    def __init__(self, a=1., trainable=True):
         super().__init__()
-        self.a = a
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
 
     def forward(self, x):
         return 1/(1+(self.a*x)**2)
 
 
 class MultiQuadraticActivation(nn.Module):
-    def __init__(self, a=1.):
+    def __init__(self, a=1., trainable=True):
         super().__init__()
-        self.a = a
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
 
     def forward(self, x):
         return 1/(1+(self.a*x)**2)**0.5
 
 
 class LaplacianActivation(nn.Module):
-    def __init__(self, a=1.):
+    def __init__(self, a=1., trainable=True):
         super().__init__()
-        self.a = a
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
 
     def forward(self, x):
         return torch.exp(-torch.abs(x)/self.a)
 
 
 class SuperGaussianActivation(nn.Module):
-    def __init__(self, a=1., b=1.):
+    def __init__(self, a=1., b=1., trainable=True):
         super().__init__()
-        self.a = a
-        self.b = b
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
+        self.register_parameter('b', nn.Parameter(b*torch.ones(1), trainable))
 
     def forward(self, x):
         return torch.exp(-x**2/(2*self.a**2))**self.b
 
 
 class ExpSinActivation(nn.Module):
-    def __init__(self, a=1.):
+    def __init__(self, a=1., trainable=True):
         super().__init__()
-        self.a = a
+        self.register_parameter('a', nn.Parameter(a*torch.ones(1), trainable))
 
     def forward(self, x):
         return torch.exp(-torch.sin(self.a*x))
