@@ -15,10 +15,8 @@ class MLP(nn.Module):
 
             if i == 0:
                 l = nn.Linear(n_in, n_hidden_units)
-                a = l.weight.std().item()
             elif 0 < i < n_layers-1:
                 l = nn.Linear(n_hidden_units, n_hidden_units)
-                a = l.weight.std().item()
 
             if act == 'relu':
                 act_ = nn.ReLU(True)
