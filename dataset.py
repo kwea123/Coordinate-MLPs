@@ -18,9 +18,9 @@ class ImageDataset(Dataset):
         self.uv = create_meshgrid(img_wh[1], img_wh[0], True)[0]
         self.rgb = torch.FloatTensor(image)
 
-        # if split == 'train':
-        #     self.uv = self.uv[::2, ::2]
-        #     self.rgb = self.rgb[::2, ::2]
+        if split == 'train':
+            self.uv = self.uv[::2, ::2]
+            self.rgb = self.rgb[::2, ::2]
 
         self.uv = rearrange(self.uv, 'h w c -> (h w) c')
         self.rgb = rearrange(self.rgb, 'h w c -> (h w) c')
