@@ -28,10 +28,6 @@ def get_opts():
                         help='number of batch size')
     parser.add_argument('--lr', type=float, default=1e-4,
                         help='learning rate')
-    parser.add_argument('--lr_a', type=float, default=1e-4,
-                        help='learning rate for activation parameters')
-    parser.add_argument('--use_lr_a_decay', default=False, action='store_true',
-                        help='use lr decay for activation parameter or not')
     parser.add_argument('--num_epochs', type=int, default=1000,
                         help='number of epochs')
 

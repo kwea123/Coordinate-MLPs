@@ -16,7 +16,6 @@ from metrics import psnr
 
 # optimizer
 from torch.optim import Adam
-from torch.optim.lr_scheduler import MultiStepLR
 
 from pytorch_lightning import LightningModule, Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
@@ -90,36 +89,16 @@ class CoordMLPSystem(LightningModule):
                           pin_memory=True)
 
     def configure_optimizers(self):
-        act_layers = ['net.1.a', 'net.3.a', 'net.5.a',
-                      'net.1.b', 'net.3.b', 'net.5.b'] # hard-coded
-        act_params = map(lambda x: x[1],
-                         filter(lambda kv: kv[0] in act_layers,
-                                self.mlp.named_parameters()))
-        net_params = map(lambda x: x[1],
-                         filter(lambda kv: kv[0] not in act_layers,
-                                self.mlp.named_parameters()))
+        self.optimizer = Adam(self.mlp.parameters(), lr=self.hparams.lr)
 
-        self.net_optimizer = Adam(net_params, lr=self.hparams.lr)
-        self.act_optimizer = Adam(act_params, lr=self.hparams.lr_a)
+        return self.optimizer
 
-        if hparams.use_lr_a_decay:
-            act_scheduler = MultiStepLR(self.act_optimizer,
-                                        [hparams.num_epochs//2,
-                                         hparams.num_epochs*3//4],
-                                        gamma=0.1)
-
-            return [self.net_optimizer, self.act_optimizer], [act_scheduler]
-
-        return [self.net_optimizer, self.act_optimizer]
-
-    def training_step(self, batch, batch_idx, optimizer_idx):
+    def training_step(self, batch, batch_idx):
         rgb_pred = self(batch['uv'])
 
         loss = self.loss(rgb_pred, batch['rgb'])
         psnr_ = psnr(rgb_pred, batch['rgb'])
 
-        self.log('lr/net', get_learning_rate(self.net_optimizer))
-        self.log('lr/act', get_learning_rate(self.act_optimizer))
         self.log('train/loss', loss)
         self.log('train/psnr', psnr_, prog_bar=True)
 
