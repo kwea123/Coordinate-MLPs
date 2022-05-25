@@ -153,9 +153,6 @@ if __name__ == '__main__':
     hparams = get_opts()
     system = CoordMLPSystem(hparams)
 
-    # ckpt_cb = ModelCheckpoint(dirpath=f'ckpts/{hparams.exp_name}',
-    #                           filename='{epoch:d}',
-    #                           save_top_k=-1)
     pbar = TQDMProgressBar(refresh_rate=1)
     callbacks = [pbar]
 

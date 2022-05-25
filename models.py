@@ -68,7 +68,7 @@ class PE(nn.Module):
         """
         x: (B, 2)
         """
-        x_ = x @ self.P # (B, F)
+        x_ = 2*np.pi*x @ self.P # (B, F)
         return torch.cat([torch.sin(x_), torch.cos(x_)], 1) # (B, 2*F)
 
 
