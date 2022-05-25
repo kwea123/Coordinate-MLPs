@@ -1,8 +1,8 @@
 # Coordinate-MLPs
-Experiments of coordinate MLPs
 
-Live stream [here](https://youtu.be/cz3Tc9bNG8k) in Chinese
-Experiments of coordinate MLPs. Some but not all.
+Experiments of coordinate MLPs. Live stream [here](https://youtu.be/cz3Tc9bNG8k) in Chinese.
+
+Check out my other repository: [MINER_pl](https://github.com/kwea123/MINER_pl) that actually leverages these facinating functions, to achieve SOTA image/mesh reconstruction!
 
 ## Related papers
 
