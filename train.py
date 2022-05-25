@@ -9,13 +9,14 @@ from dataset import ImageDataset
 from torch.utils.data import DataLoader
 
 # models
-from models import PE, MLP, Siren
+from models import PE, MLP, Siren, GaborNet
 
 # metrics
 from metrics import psnr
 
 # optimizer
 from torch.optim import Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from pytorch_lightning import LightningModule, Trainer, seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
@@ -59,6 +60,15 @@ class CoordMLPSystem(LightningModule):
             self.mlp = Siren(first_omega_0=hparams.omega_0,
                              hidden_omega_0=hparams.omega_0)
 
+        elif hparams.arch == 'gabor':
+            self.mlp = GaborNet(
+                    in_size=2,
+                    hidden_size=256,
+                    out_size=3,
+                    n_layers=3,
+                    input_scale=256,
+                )
+
         self.loss = nn.MSELoss()
         
     def forward(self, x):
@@ -89,9 +99,10 @@ class CoordMLPSystem(LightningModule):
                           pin_memory=True)
 
     def configure_optimizers(self):
-        self.optimizer = Adam(self.mlp.parameters(), lr=self.hparams.lr)
+        self.opt = Adam(self.mlp.parameters(), lr=self.hparams.lr)
+        scheduler = CosineAnnealingLR(self.opt, hparams.num_epochs, hparams.lr/1e2)
 
-        return self.optimizer
+        return [self.opt], [scheduler]
 
     def training_step(self, batch, batch_idx):
         rgb_pred = self(batch['uv'])
@@ -99,16 +110,9 @@ class CoordMLPSystem(LightningModule):
         loss = self.loss(rgb_pred, batch['rgb'])
         psnr_ = psnr(rgb_pred, batch['rgb'])
 
+        self.log('lr', self.opt.param_groups[0]['lr'])
         self.log('train/loss', loss)
         self.log('train/psnr', psnr_, prog_bar=True)
-
-        if hparams.arch in ['gaussian', 'quadratic',
-                            'multi-quadratic', 'laplacian',
-                            'super-gaussian', 'expsin']:
-            for i in [1, 3, 5]: # activation layers
-                self.log(f'act/l{i}_a', self.mlp.net[i].a)
-                if hasattr(self.mlp.net[i], "b"):
-                    self.log(f'act/l{i}_b', self.mlp.net[i].b)
 
         return loss
 

@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 import numpy as np
+from einops import rearrange
 
 
 class MLP(nn.Module):
@@ -190,3 +191,75 @@ class ExpSinActivation(nn.Module):
 
     def forward(self, x):
         return torch.exp(-torch.sin(self.a*x))
+
+
+# from https://github.com/boschresearch/multiplicative-filter-networks/blob/main/mfn/mfn.py
+class MFNBase(nn.Module):
+    """
+    Multiplicative filter network base class.
+    Expects the child class to define the 'filters' attribute, which should be 
+    a nn.ModuleList of n_layers+1 filters with output equal to hidden_size.
+    """
+
+    def __init__(
+        self, hidden_size, out_size, n_layers
+    ):
+        super().__init__()
+
+        self.linear = nn.ModuleList(
+            [nn.Linear(hidden_size, hidden_size) for _ in range(n_layers)]
+        )
+        self.output_linear = \
+            nn.Sequential(nn.Linear(hidden_size, out_size),
+                          nn.Sigmoid())
+
+    def forward(self, x):
+        out = self.filters[0](x)
+        for i in range(1, len(self.filters)):
+            out = self.filters[i](x) * self.linear[i-1](out)
+        out = self.output_linear(out)
+
+        return out
+
+
+class GaborLayer(nn.Module):
+    """
+    Gabor-like filter as used in GaborNet.
+    """
+    def __init__(self, in_features, out_features, weight_scale, alpha=1.0):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.mu = nn.Parameter(2*torch.rand(1, out_features, in_features)-1)
+        self.gamma = nn.Parameter(
+            torch.distributions.gamma.Gamma(alpha, 1.0).sample((out_features,))
+        )
+        self.linear.weight.data *= weight_scale*self.gamma[:, None]**0.5
+        self.linear.bias.data.uniform_(-np.pi, np.pi)
+
+    def forward(self, x):
+        D = torch.norm((rearrange(x, 'b d -> b 1 d')-self.mu)**2, dim=-1)
+        return torch.sin(self.linear(x)) * torch.exp(-0.5*D*self.gamma[None])
+
+
+class GaborNet(MFNBase):
+    def __init__(
+        self,
+        in_size,
+        hidden_size,
+        out_size,
+        n_layers=3,
+        input_scale=256.0,
+        alpha=6.0,
+    ):
+        super().__init__(hidden_size, out_size, n_layers)
+        self.filters = nn.ModuleList(
+            [
+                GaborLayer(
+                    in_size,
+                    hidden_size,
+                    input_scale / np.sqrt(n_layers + 1),
+                    alpha / (n_layers + 1),
+                )
+                for _ in range(n_layers + 1)
+            ]
+        )
