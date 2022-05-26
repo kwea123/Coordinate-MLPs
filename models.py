@@ -194,16 +194,30 @@ class ExpSinActivation(nn.Module):
 
 
 # from https://github.com/boschresearch/multiplicative-filter-networks/blob/main/mfn/mfn.py
-class MFNBase(nn.Module):
-    """
-    Multiplicative filter network base class.
-    Expects the child class to define the 'filters' attribute, which should be 
-    a nn.ModuleList of n_layers+1 filters with output equal to hidden_size.
-    """
+class GaborLayer(nn.Module):
+    def __init__(self, in_features, out_features, weight_scale, alpha):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features)
+        self.mu = nn.Parameter(2*torch.rand(1, out_features, in_features)-1)
+        self.gamma = nn.Parameter(
+            torch.distributions.gamma.Gamma(alpha, 1.0).sample((out_features,)))
+        self.linear.weight.data *= weight_scale*self.gamma[:, None]**0.5
+        self.linear.bias.data.uniform_(-np.pi, np.pi)
 
+    def forward(self, x):
+        D = torch.norm(rearrange(x, 'b d -> b 1 d')-self.mu, dim=-1)**2
+        return torch.sin(self.linear(x)) * torch.exp(-0.5*D*self.gamma[None])
+
+
+class GaborNet(nn.Module):
     def __init__(
-        self, hidden_size, out_size, n_layers
-    ):
+        self,
+        in_size=2,
+        hidden_size=256,
+        out_size=3,
+        n_layers=4,
+        input_scale=256.0,
+        alpha=6.0):
         super().__init__()
 
         self.linear = nn.ModuleList(
@@ -212,6 +226,18 @@ class MFNBase(nn.Module):
         self.output_linear = \
             nn.Sequential(nn.Linear(hidden_size, out_size),
                           nn.Sigmoid())
+
+        self.filters = nn.ModuleList(
+            [
+                GaborLayer(
+                    in_size,
+                    hidden_size,
+                    input_scale / np.sqrt(n_layers + 1),
+                    alpha / (n_layers + 1)
+                )
+                for _ in range(n_layers + 1)
+            ]
+        )
 
     def forward(self, x):
         out = self.filters[0](x)
@@ -222,44 +248,89 @@ class MFNBase(nn.Module):
         return out
 
 
-class GaborLayer(nn.Module):
-    """
-    Gabor-like filter as used in GaborNet.
-    """
-    def __init__(self, in_features, out_features, weight_scale, alpha=1.0):
+# from https://github.com/computational-imaging/bacon/blob/main/modules.py
+def mfn_weights_init(m):
+    with torch.no_grad():
+        if hasattr(m, 'weight'):
+            num_input = m.weight.size(-1)
+            m.weight.uniform_(-(12/num_input)**0.5, (12/num_input)**0.5)
+
+
+class GaborLayer_Bacon(nn.Module):
+    def __init__(self, in_features, out_features, weight_scale, alpha,
+                 quantization_interval):
         super().__init__()
         self.linear = nn.Linear(in_features, out_features)
+
         self.mu = nn.Parameter(2*torch.rand(1, out_features, in_features)-1)
         self.gamma = nn.Parameter(
-            torch.distributions.gamma.Gamma(alpha, 1.0).sample((out_features,))
-        )
-        self.linear.weight.data *= weight_scale*self.gamma[:, None]**0.5
+            torch.distributions.gamma.Gamma(alpha, 1.0).sample((out_features,)))
+
+        # sample discrete frequencies to ensure coverage
+        for i in range(in_features):
+            init = torch.randint_like(
+                self.linear.weight.data[:, i],
+                int(2*weight_scale[i]/quantization_interval)+1)
+            init = init * quantization_interval - weight_scale[i]
+            self.linear.weight.data[:, i] = init*self.gamma**0.5
+
+        self.linear.weight.requires_grad = False
         self.linear.bias.data.uniform_(-np.pi, np.pi)
 
     def forward(self, x):
-        D = torch.norm((rearrange(x, 'b d -> b 1 d')-self.mu)**2, dim=-1)
-        return torch.sin(self.linear(x)) * torch.exp(-0.5*D*self.gamma[None])
+        D = torch.norm(rearrange(x, 'b d -> b 1 d')-self.mu, dim=-1)**2
+        return torch.sin(self.linear(x)) * \
+               torch.exp(-0.5*D*rearrange(self.gamma, 'o -> 1 o'))
 
 
-class GaborNet(MFNBase):
-    def __init__(
-        self,
-        in_size,
-        hidden_size,
-        out_size,
-        n_layers=3,
-        input_scale=256.0,
-        alpha=6.0,
-    ):
-        super().__init__(hidden_size, out_size, n_layers)
-        self.filters = nn.ModuleList(
-            [
-                GaborLayer(
-                    in_size,
-                    hidden_size,
-                    input_scale / np.sqrt(n_layers + 1),
-                    alpha / (n_layers + 1),
-                )
-                for _ in range(n_layers + 1)
-            ]
-        )
+class MultiscaleBACON(nn.Module):
+    def __init__(self,
+                 in_size=2,
+                 hidden_size=256,
+                 out_size=3,
+                 n_layers=4,
+                 alpha=6.0,
+                 frequency=(128, 128),
+                 quantization_interval=2*np.pi,
+                 input_scales=[1/8, 1/8, 1/4, 1/4, 1/4],
+                 output_layers=[4]):
+        super().__init__()
+
+        self.output_layers = output_layers
+
+        # we need to multiply by this to be able to fit the signal
+        if len(input_scales) != n_layers+1:
+            raise ValueError('require n+1 scales for n hidden_layers')
+        input_scales = [[round((np.pi*freq*s)/quantization_interval) * \
+                         quantization_interval
+                         for freq in frequency] for s in input_scales]
+
+        self.filters = nn.ModuleList([
+                        GaborLayer_Bacon(in_size, hidden_size,
+                                         input_scales[i]/np.sqrt(n_layers+1),
+                                         alpha/(n_layers+1),
+                                         quantization_interval)
+                        for i in range(n_layers+1)])
+        self.linear = nn.ModuleList(
+            [nn.Linear(hidden_size, hidden_size) for _ in range(n_layers)])
+        # linear layers to extract intermediate outputs
+        self.output_linear = nn.ModuleList(
+            [nn.Sequential(nn.Linear(hidden_size, out_size),
+                           nn.Sigmoid()) 
+             for _ in range(len(self.output_layers))])
+        self.linear.apply(mfn_weights_init)
+        self.output_linear.apply(mfn_weights_init)
+
+    def forward(self, x):
+        outs = []
+        out = self.filters[0](x)
+        k = 0
+        for i in range(1, len(self.filters)):
+            l = self.linear[i-1](out)
+            out = self.filters[i](x) * l
+            # outs += [l]
+            if i in self.output_layers:
+                outs += [self.output_linear[k](out)]
+                k += 1
+
+        return outs

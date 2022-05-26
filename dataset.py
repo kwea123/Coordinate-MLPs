@@ -10,12 +10,9 @@ from typing import Tuple
 
 class ImageDataset(Dataset):
     def __init__(self, image_path: str, img_wh: Tuple[int, int], split: str):
-        """
-        split: 'train' or 'val'
-        """
         image = imageio.imread(image_path)[..., :3]/255.
         image = cv2.resize(image, img_wh)
-        # image = np.load('images/data_div2k.npz')['test_data'][15]/255.
+        # image = np.load('images/data_2d_text.npz')['test_data'][6]/255.
 
         self.uv = create_meshgrid(*image.shape[:2], True)[0]
         self.rgb = torch.FloatTensor(image)
@@ -23,6 +20,9 @@ class ImageDataset(Dataset):
         if split == 'train':
             self.uv = self.uv[::2, ::2]
             self.rgb = self.rgb[::2, ::2]
+        elif split == 'val':
+            self.uv = self.uv[1::2, 1::2]
+            self.rgb = self.rgb[1::2, 1::2]
 
         self.uv = rearrange(self.uv, 'h w c -> (h w) c')
         self.rgb = rearrange(self.rgb, 'h w c -> (h w) c')

@@ -9,17 +9,17 @@ from dataset import ImageDataset
 from torch.utils.data import DataLoader
 
 # models
-from models import PE, MLP, Siren, GaborNet
+from models import PE, MLP, Siren, GaborNet, MultiscaleBACON
 
 # metrics
-from metrics import psnr
+from metrics import mse, psnr
 
 # optimizer
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from pytorch_lightning import LightningModule, Trainer, seed_everything
-from pytorch_lightning.callbacks import ModelCheckpoint, TQDMProgressBar
+from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning.callbacks import TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 
 
@@ -61,16 +61,12 @@ class CoordMLPSystem(LightningModule):
                              hidden_omega_0=hparams.omega_0)
 
         elif hparams.arch == 'gabor':
-            self.mlp = GaborNet(
-                    in_size=2,
-                    hidden_size=256,
-                    out_size=3,
-                    n_layers=3,
-                    input_scale=256,
-                )
+            self.mlp = GaborNet(input_scale=max(hparams.img_wh)/4)
 
-        self.loss = nn.MSELoss()
-        
+        elif hparams.arch == 'bacon':
+            self.mlp = MultiscaleBACON(
+                    frequency=[hparams.img_wh[0]//4, hparams.img_wh[1]//4])
+
     def forward(self, x):
         if hparams.use_pe or hparams.arch=='ff':
             x = self.pe(x)
@@ -107,8 +103,12 @@ class CoordMLPSystem(LightningModule):
     def training_step(self, batch, batch_idx):
         rgb_pred = self(batch['uv'])
 
-        loss = self.loss(rgb_pred, batch['rgb'])
-        psnr_ = psnr(rgb_pred, batch['rgb'])
+        if hparams.arch=='bacon':
+            loss = sum(mse(x, batch['rgb']) for x in rgb_pred)
+            psnr_ = psnr(rgb_pred[-1], batch['rgb'])
+        else:
+            loss = mse(rgb_pred, batch['rgb'])
+            psnr_ = psnr(rgb_pred, batch['rgb'])
 
         self.log('lr', self.opt.param_groups[0]['lr'])
         self.log('train/loss', loss)
@@ -119,27 +119,32 @@ class CoordMLPSystem(LightningModule):
     def validation_step(self, batch, batch_idx):
         rgb_pred = self(batch['uv'])
 
-        loss = self.loss(rgb_pred, batch['rgb'])
-        psnr_ = psnr(rgb_pred, batch['rgb'])
+        if hparams.arch=='bacon':
+            loss = mse(rgb_pred[-1], batch['rgb'], reduction='none')
+        else:
+            loss = mse(rgb_pred, batch['rgb'], reduction='none')
 
         log = {'val_loss': loss,
-               'val_psnr': psnr_,
-               'rgb_gt': batch['rgb'],
-               'rgb_pred': rgb_pred}
+               'rgb_gt': batch['rgb']}
+
+        if hparams.arch=='bacon':
+            log['rgb_pred'] = rgb_pred[-1]
+        else:
+            log['rgb_pred'] = rgb_pred
 
         return log
 
     def validation_epoch_end(self, outputs):
-        mean_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
-        mean_psnr = torch.stack([x['val_psnr'] for x in outputs]).mean()
+        mean_loss = torch.cat([x['val_loss'] for x in outputs]).mean()
+        mean_psnr = -10*torch.log10(mean_loss)
         rgb_gt = torch.cat([x['rgb_gt'] for x in outputs])
         rgb_gt = rearrange(rgb_gt, '(h w) c -> c h w',
-                           h=hparams.img_wh[1],
-                           w=hparams.img_wh[0])
+                           h=hparams.img_wh[1]//2,
+                           w=hparams.img_wh[0]//2)
         rgb_pred = torch.cat([x['rgb_pred'] for x in outputs])
         rgb_pred = rearrange(rgb_pred, '(h w) c -> c h w',
-                             h=hparams.img_wh[1],
-                             w=hparams.img_wh[0])
+                             h=hparams.img_wh[1]//2,
+                             w=hparams.img_wh[0]//2)
 
         self.logger.experiment.add_images('val/gt_pred',
                                           torch.stack([rgb_gt, rgb_pred]),

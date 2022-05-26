@@ -10,7 +10,7 @@ def get_opts():
     parser.add_argument('--use_pe', default=False, action='store_true',
                         help='use positional encoding or not')
     parser.add_argument('--arch', type=str, default='identity',
-                        choices=['relu', 'ff', 'siren', 'gabor',
+                        choices=['relu', 'ff', 'siren', 'gabor', 'bacon',
                                  'gaussian', 'quadratic', 'multi-quadratic',
                                  'laplacian', 'super-gaussian', 'expsin'],
                         help='network structure')
