@@ -293,14 +293,13 @@ class MultiscaleBACON(nn.Module):
                  frequency=(128, 128),
                  quantization_interval=2*np.pi,
                  input_scales=[1/8, 1/8, 1/4, 1/4, 1/4],
-                 output_layers=[4]):
+                 output_layers=[1, 2, 4]):
         super().__init__()
 
+        self.n_layers = n_layers
         self.output_layers = output_layers
 
         # we need to multiply by this to be able to fit the signal
-        if len(input_scales) != n_layers+1:
-            raise ValueError('require n+1 scales for n hidden_layers')
         input_scales = [[round((np.pi*freq*s)/quantization_interval) * \
                          quantization_interval
                          for freq in frequency] for s in input_scales]
@@ -313,24 +312,22 @@ class MultiscaleBACON(nn.Module):
                         for i in range(n_layers+1)])
         self.linear = nn.ModuleList(
             [nn.Linear(hidden_size, hidden_size) for _ in range(n_layers)])
-        # linear layers to extract intermediate outputs
-        self.output_linear = nn.ModuleList(
-            [nn.Sequential(nn.Linear(hidden_size, out_size),
-                           nn.Sigmoid()) 
-             for _ in range(len(self.output_layers))])
         self.linear.apply(mfn_weights_init)
-        self.output_linear.apply(mfn_weights_init)
+
+        self.out = \
+            nn.Sequential(nn.Linear(hidden_size, out_size), nn.Sigmoid()) 
+            
+        # make the final layer (after sigmoid) "almost" uniform in [0, 1]
+        # TODO: find the math formula...
+        nn.init.uniform_(self.out[0].weight,
+                         -6/hidden_size**0.5, 6/hidden_size**0.5)
 
     def forward(self, x):
         outs = []
         out = self.filters[0](x)
-        k = 0
         for i in range(1, len(self.filters)):
-            l = self.linear[i-1](out)
-            out = self.filters[i](x) * l
-            # outs += [l]
+            out = self.filters[i](x) * self.linear[i-1](out)
             if i in self.output_layers:
-                outs += [self.output_linear[k](out)]
-                k += 1
+                outs += [self.out(out)]
 
         return outs
